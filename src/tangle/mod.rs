@@ -207,7 +207,7 @@ impl Tangle {
     fn confirm_recent_cone(&self, ma: &Id, pa: &Id, index: MilestoneIndex) -> Vec<Id> {
         let now = Instant::now();
         let mut visited = vec![*ma, *pa];
-        let mut collected = Vec::new();
+        let mut confirmed = Vec::new();
 
         while let Some(id) = visited.pop() {
             if let Some(mut vertex) = self.vertices.get_mut(&id) {
@@ -226,7 +226,7 @@ impl Tangle {
                     vertex.ytrsi = Some(IndexId(index, id));
 
                     // NOTE: we collect the newly confirmed vertices
-                    collected.push(id);
+                    confirmed.push(id);
 
                     // Continue confirming its parents (if those aren't confirmed yet)
                     visited.push(vertex.parents.ma);
@@ -239,8 +239,13 @@ impl Tangle {
             }
         }
 
-        println!("[confirm   ] Finished in {:?}", now.elapsed());
-        collected
+        println!(
+            "[confirm   ] Confirmed {} transactions in {:?}",
+            confirmed.len(),
+            now.elapsed()
+        );
+
+        confirmed
     }
 
     // NOTE: so once a milestone comes in we have to walk the future cones of the root transactions and update their

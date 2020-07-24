@@ -11,9 +11,9 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::thread;
 use std::time::Duration;
 
-const TPS_IN: u64 = 2;
+const TPS_IN: u64 = 3;
 const TPS_IN_PAUSE: u64 = (1_f64 / (TPS_IN as f64) * 1000_f64) as u64;
-const TPS_OUT: u64 = 2;
+const TPS_OUT: u64 = 1;
 const TPS_OUT_PAUSE: u64 = (1_f64 / (TPS_OUT as f64) * 1000_f64) as u64;
 const MS_INTERVAL: u64 = 10;
 
@@ -45,10 +45,11 @@ fn main() {
 
             if IS_MILESTONE.compare_and_swap(true, false, Ordering::Relaxed) {
                 println!(
-                    "[GOSSIP] Received milestone with index {} and parents ({},{})",
+                    "[GOSSIP_IN] Received milestone with index {} and parents ({},{})",
                     ms_index, ma, pa
                 );
                 tangle().insert(i, Payload::Milestone(ms_index), ma, pa);
+                ms_index += 1;
             } else {
                 println!(
                     "[GOSSIP_IN ] Received transaction: {} with parents ({},{})",
@@ -66,7 +67,7 @@ fn main() {
         if let Some((ma, pa)) = tangle().select_two_tips() {
             let i = LAST_TX_ID.fetch_add(1, Ordering::Relaxed);
             println!(
-                "[GOSSIP_OUT] Created transaction: {} with parents ({},{})",
+                "[BROADCAST ] Created transaction: {} with parents ({},{})",
                 i, ma, pa
             );
             tangle().insert(i, Payload::Message(i.to_string()), ma, pa);
