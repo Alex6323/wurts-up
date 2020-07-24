@@ -39,13 +39,17 @@ pub fn tangle() -> &'static Tangle {
 
 #[derive(Default)]
 pub struct Tangle {
+    // all vertices in the Tangle
     pub vertices: HashMap<Id, Vertex>,
 
-    // missing parents; TODO: add confirmation info to it so, that it can be immediatedly set to confirmed if a milestone came in earlier
+    // missing parents; TODO: add confirmation info to it so, that it can be immediatedly set to confirmed if a
+    // milestone came in earlier
     pub missing: HashMap<Id, Children>,
-    pub seps: HashMap<Id, MilestoneIndex>,
 
     // solid entry points and their corresponding milestone index; TODO: use `IndexId` type
+    pub seps: HashMap<Id, MilestoneIndex>,
+
+    // vertices without children/approvers
     pub tips: HashSet<Id>,
     pub lmi: AtomicU64,  // MilestoneIndex
     pub lsmi: AtomicU64, //MilestoneIndex
