@@ -2,13 +2,13 @@ mod models;
 
 use models::*;
 
-pub use models::Payload;
+pub use models::{AtomicMilestoneIndex, Payload};
 
 use rand::Rng;
 
 use std::cmp::{max, min};
 use std::ptr;
-use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
 use std::time::Instant;
 
 use dashmap::{DashMap as HashMap, DashSet as HashSet};
@@ -51,8 +51,8 @@ pub struct Tangle {
 
     // vertices without children/approvers
     pub tips: HashSet<Id>,
-    pub lmi: AtomicU64,  // MilestoneIndex
-    pub lsmi: AtomicU64, //MilestoneIndex
+    pub lmi: AtomicMilestoneIndex,
+    pub lsmi: AtomicMilestoneIndex,
 }
 
 impl Tangle {

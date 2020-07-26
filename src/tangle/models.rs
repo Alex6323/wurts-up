@@ -1,9 +1,11 @@
 use std::cmp::Ordering;
+use std::sync::atomic::AtomicU64;
 
 use dashmap::DashSet as HashSet;
 
 pub type Id = u64; // maybe the interned ternary hash
 pub type MilestoneIndex = u64;
+pub type AtomicMilestoneIndex = AtomicU64;
 pub type OTRSI = MilestoneIndex;
 pub type YTRSI = MilestoneIndex;
 pub type Confirmation = Option<MilestoneIndex>;
