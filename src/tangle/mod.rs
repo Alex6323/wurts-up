@@ -110,9 +110,9 @@ impl Tangle {
                 println!("[insert    ] LMI now at {}", index);
 
                 // NOTE: how to deal with the situation, that a milestone might not be solid?
-                let collected = self.confirm_recent_cone(&ma, &pa, index);
+                let confirmed = self.confirm_recent_cone(&ma, &pa, index);
 
-                self.update_snapshot_indices(collected, index);
+                self.update_snapshot_indices(confirmed, index);
 
                 Some(index)
             }
@@ -254,12 +254,12 @@ impl Tangle {
 
     // NOTE: so once a milestone comes in we have to walk the future cones of the root transactions and update their
     // OTRSI and YTRSI
-    fn update_snapshot_indices(&self, mut collected: Vec<Id>, index: MilestoneIndex) {
+    fn update_snapshot_indices(&self, mut confirmed: Vec<Id>, index: MilestoneIndex) {
         let now = Instant::now();
         let mut children = Vec::new();
         let mut updated = std::collections::HashSet::new();
 
-        while let Some(id) = collected.pop() {
+        while let Some(id) = confirmed.pop() {
             children.clear();
 
             // NOTE: Rust borrow rules force us to first create a children vec
@@ -306,7 +306,7 @@ impl Tangle {
                     if !updated.contains(child) {
                         //println!("[update rsi] Proceding with {}", child);
 
-                        collected.push(*child);
+                        confirmed.push(*child);
                     }
                 }
             }

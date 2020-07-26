@@ -11,7 +11,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::thread;
 use std::time::Duration;
 
-const TPS_IN: u64 = 3;
+const TPS_IN: u64 = 2;
 const TPS_IN_PAUSE: u64 = (1_f64 / (TPS_IN as f64) * 1000_f64) as u64;
 const TPS_OUT: u64 = 1;
 const TPS_OUT_PAUSE: u64 = (1_f64 / (TPS_OUT as f64) * 1000_f64) as u64;
