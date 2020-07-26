@@ -45,7 +45,7 @@ fn main() {
 
             if IS_MILESTONE.compare_and_swap(true, false, Ordering::Relaxed) {
                 println!(
-                    "[GOSSIP_IN] Received milestone with index {} and parents ({},{})",
+                    "[GOSSIP_IN ] Received milestone with index {} and parents ({},{})",
                     ms_index, ma, pa
                 );
                 tangle().insert(i, Payload::Milestone(ms_index), ma, pa);
@@ -67,7 +67,7 @@ fn main() {
         if let Some((ma, pa)) = tangle().select_two_tips() {
             let i = LAST_TX_ID.fetch_add(1, Ordering::Relaxed);
             println!(
-                "[BROADCAST ] Created transaction: {} with parents ({},{})",
+                "[BROADCAST ] Created transaction with id={} and parents ({},{})",
                 i, ma, pa
             );
             tangle().insert(i, Payload::Message(i.to_string()), ma, pa);

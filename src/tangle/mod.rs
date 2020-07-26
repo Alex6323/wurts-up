@@ -57,9 +57,7 @@ pub struct Tangle {
 
 impl Tangle {
     pub fn insert(&self, id: Id, payload: Payload, ma: Id, pa: Id) {
-        // NOTE: this is just here to get a rough idea about how long inserting is; uncomment this an the print statement
-        // at the end of t his method.
-        //let now = Instant::now();
+        let now = Instant::now();
 
         self.tips.remove(&ma);
         self.tips.remove(&pa);
@@ -136,13 +134,20 @@ impl Tangle {
         // `ytrsi`: the ytrsi of the child is the maximum of the ytrsi`s of its parents (max(ma.ytrsi, pa.ytrsi))
         self.propagate_state(&id);
 
-        //println!("[insert    ] Inserted transaction in {:?}", now.elapsed());
+        println!(
+            "[insert    ] Inserted vertex with id={} in {:?}",
+            id,
+            now.elapsed()
+        );
     }
 
     // NOTE: there are 3 things being propagated/inherited: solid flag, otrsi, and ytrsi
     fn propagate_state(&self, root: &Id) {
         let now = Instant::now();
         let mut children = vec![*root];
+
+        //temp
+        let mut num_children = 0;
 
         while let Some(id) = children.pop() {
             // NOTE: if it's already solid then we don't need to propagate a state change
@@ -198,11 +203,18 @@ impl Tangle {
                     for child in vertex.children.iter() {
                         children.push(*child);
                     }
+
+                    num_children += vertex.children.len();
                 }
             }
         }
 
-        println!("[prop_state] Finished in {:?}", now.elapsed());
+        println!(
+            "[prop_state] Propagated state to vertex {} and its {} children in {:?}",
+            root,
+            num_children,
+            now.elapsed()
+        );
     }
 
     // TODO: barrier?
@@ -314,7 +326,7 @@ impl Tangle {
             updated.insert(id);
         }
 
-        println!("[update rsi] Finished in {:?}", now.elapsed());
+        println!("[update rsi] Updated RSI values in {:?}", now.elapsed());
     }
 
     // Allows us to define certain `Id`s as solid entry points.
@@ -415,7 +427,7 @@ impl Tangle {
                     continue;
                 }
 
-                //println!("added a valid with id={}, score={}", id, score);
+                //println!("[select_tip] Added a valid tip with id={}, score={}", id, score);
 
                 valid_tips.push((*id, score));
                 score_sum += score;
@@ -427,8 +439,8 @@ impl Tangle {
         // TODO: randomly select tip
         let mut rng = rand::thread_rng();
         let mut random_number = rng.gen_range(1, score_sum);
-        //println!("random_number={}", random_number);
-        println!("[select_tip] tip pool size={}", valid_tips.len());
+
+        println!("[select_tip] Tip Pool Size = {}", valid_tips.len());
 
         for (id, score) in valid_tips.iter() {
             random_number -= score;
@@ -436,12 +448,17 @@ impl Tangle {
                 if let Some(mut tip) = self.vertices.get_mut(id) {
                     tip.selected += 1;
                 }
-                println!("[select_tip] Selected tip={} in {:?}", id, now.elapsed());
+
+                println!(
+                    "[select_tip] Selected tip with id={} in {:?}",
+                    id,
+                    now.elapsed()
+                );
                 return Some(*id);
             }
         }
 
-        println!("found no tip in {:?}", now.elapsed());
+        println!("[select_tip] Found no tip in {:?}", now.elapsed());
         None
     }
 
