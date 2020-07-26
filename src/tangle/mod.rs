@@ -95,7 +95,7 @@ impl Tangle {
 
         // Here we analyze the type of payload; it's either a (string) message, or a milestone
         // (with an associated index)
-        let confirmation = match payload {
+        let confirmed = match payload {
             Payload::Message(_) => None,
             Payload::Milestone(index) => {
                 println!(
@@ -121,7 +121,8 @@ impl Tangle {
             payload,
             parents: Parents { ma, pa },
             children,
-            confirmation,
+            confirmed,
+            valid: true,
             ..Vertex::default() // default: unsolid
         };
 
@@ -227,13 +228,13 @@ impl Tangle {
 
         while let Some(id) = visited.pop() {
             if let Some(mut vertex) = self.vertices.get_mut(&id) {
-                if vertex.confirmation.is_none() {
+                if vertex.confirmed.is_none() {
                     // println!(
                     //     "[confirm   ] Confirmed vertex with id={} (ms_index={})",
                     //     id, index
                     // );
 
-                    vertex.confirmation = Some(index);
+                    vertex.confirmed = Some(index);
 
                     // NOTE: Setting otrsi and ytrsi for  confirmed vertices - I think - prevents some branching,
                     // if the tip directly attaches to it
@@ -286,7 +287,7 @@ impl Tangle {
 
             for child in &children {
                 if let Some(mut vertex2) = self.vertices.get_mut(&child) {
-                    if vertex2.confirmation.is_some() {
+                    if vertex2.confirmed.is_some() {
                         // NOTE: we can ignore already confirmed vertices
                         // println!("[update rsi] No update required: {}", child);
                         continue;
@@ -377,9 +378,7 @@ impl Tangle {
     }
 
     pub fn confirmed(&self, id: &Id) -> Option<bool> {
-        self.vertices
-            .get(id)
-            .map(|r| r.value().confirmation.is_some())
+        self.vertices.get(id).map(|r| r.value().confirmed.is_some())
     }
 
     pub fn get(&self, id: &Id) -> Option<Payload> {
@@ -422,8 +421,12 @@ impl Tangle {
                 let score = self.get_tip_score(&id, otrsi, ytrsi) as isize;
 
                 // NOTE: only non- and semi-lazy tips are considered for selection
-                if !tip.solid || tip.selected > 2 || score == 0 {
+                if !tip.solid || !tip.valid || tip.selected > 2 || score == 0 {
                     remove_list.push(id);
+                    println!(
+                        "[select_tip] Removing tip: solid={}, valid={}, selected={}, score={}",
+                        tip.solid, tip.valid, tip.selected, score
+                    );
                     continue;
                 }
 
@@ -435,6 +438,7 @@ impl Tangle {
         }
 
         // TODO: remove invalid tips
+        println!("[select_tip] {} tips should be removed", remove_list.len());
 
         // TODO: randomly select tip
         let mut rng = rand::thread_rng();
@@ -532,7 +536,7 @@ impl Tangle {
 
         while let Some(id) = visited.pop() {
             if let Some(vertex) = self.vertices.get(&id) {
-                if let Some(index) = vertex.confirmation {
+                if let Some(index) = vertex.confirmed {
                     collected.insert(index);
                 } else {
                     visited.push(vertex.parents.ma);

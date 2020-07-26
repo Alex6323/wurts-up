@@ -66,8 +66,9 @@ pub struct Vertex {
     pub payload: Payload,
     pub parents: Parents,
     pub children: Children,
-    pub confirmation: Confirmation,
     pub solid: bool,
+    pub valid: bool,
+    pub confirmed: Confirmation,
     pub otrsi: Option<IndexId>, // can only be missing if ma and pa were missing; same for ytrsi
     pub ytrsi: Option<IndexId>,
     pub selected: u8, //number of times we selected it in the TSA
