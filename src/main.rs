@@ -3,7 +3,7 @@
 mod tangle;
 mod utils;
 
-use tangle::{tangle, Payload};
+use tangle::{tangle, Transaction};
 
 use rand::Rng;
 
@@ -50,7 +50,7 @@ fn main() {
                     "[GOSSIP_IN ] Received milestone with index {} and parents ({},{})",
                     ms_index, ma, pa
                 );
-                tangle().insert(i, Payload::Milestone(ms_index), ma, pa);
+                tangle().insert(i, Transaction::Milestone(ms_index), ma, pa);
                 ms_index += 1;
             } else if IS_INVALID.compare_and_swap(true, false, Ordering::Relaxed) {
                 //
@@ -59,7 +59,7 @@ fn main() {
                     "[GOSSIP_IN ] Received transaction: {} with parents ({},{})",
                     i, ma, pa
                 );
-                tangle().insert(i, Payload::Message(i.to_string()), ma, pa);
+                tangle().insert(i, Transaction::Message(i.to_string()), ma, pa);
             }
         }
     }));
@@ -74,11 +74,13 @@ fn main() {
                 "[BROADCAST ] Created transaction with id={} and parents ({},{})",
                 i, ma, pa
             );
-            tangle().insert(i, Payload::Message(i.to_string()), ma, pa);
+            tangle().insert(i, Transaction::Message(i.to_string()), ma, pa);
         } else {
             println!("tip pool empty");
         }
     }));
+
+    // TODO: flag an existing transaction as milestone
 
     // insert gossiped milestones (coordinator TSA: previous milestone in past cone)
     handles.push(thread::spawn(move || {
@@ -89,6 +91,8 @@ fn main() {
             IS_MILESTONE.compare_and_swap(false, true, Ordering::Relaxed);
         }
     }));
+
+    // TODO: flag an existing transaction as invalid
 
     // insert invalid transactions
     handles.push(thread::spawn(move || {

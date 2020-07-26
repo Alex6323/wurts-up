@@ -2,7 +2,7 @@ mod models;
 
 use models::*;
 
-pub use models::{AtomicMilestoneIndex, Payload};
+pub use models::{AtomicMilestoneIndex, Transaction};
 
 use rand::Rng;
 
@@ -56,7 +56,7 @@ pub struct Tangle {
 }
 
 impl Tangle {
-    pub fn insert(&self, id: Id, payload: Payload, ma: Id, pa: Id) {
+    pub fn insert(&self, id: Id, transaction: Transaction, ma: Id, pa: Id) {
         let now = Instant::now();
 
         self.tips.remove(&ma);
@@ -93,11 +93,11 @@ impl Tangle {
             }
         }
 
-        // Here we analyze the type of payload; it's either a (string) message, or a milestone
+        // Here we analyze the type of transaction; it's either a (string) message, or a milestone
         // (with an associated index)
-        let confirmed = match payload {
-            Payload::Message(_) => None,
-            Payload::Milestone(index) => {
+        let confirmed = match transaction {
+            Transaction::Message(_) => None,
+            Transaction::Milestone(index) => {
                 println!(
                     "[insert    ] Milestone arrived with id={}, index={}",
                     id, index
@@ -116,13 +116,12 @@ impl Tangle {
             }
         };
 
-        // Now we create a `Vertex`, that holds the payload (Message or Milestone) ...
+        // Now we create a `Vertex`, that holds the transaction (Message or Milestone) ...
         let vertex = Vertex {
-            payload,
+            transaction,
             parents: Parents { ma, pa },
             children,
             confirmed,
-            valid: true,
             ..Vertex::default() // default: unsolid
         };
 
@@ -183,8 +182,8 @@ impl Tangle {
                 if let Some(mut vertex) = self.vertices.get_mut(&id) {
                     vertex.solid = true;
 
-                    match vertex.payload {
-                        Payload::Milestone(index) => {
+                    match vertex.transaction {
+                        Transaction::Milestone(index) => {
                             self.lsmi.store(index, Ordering::Relaxed);
 
                             println!("[prop_state] LSMI now at {}", index);
@@ -349,7 +348,7 @@ impl Tangle {
 
     pub fn is_milestone(&self, id: &Id) -> bool {
         if let Some(vertex) = self.vertices.get(&id) {
-            vertex.payload.is_milestone()
+            vertex.transaction.is_milestone()
         } else {
             false
         }
@@ -381,8 +380,8 @@ impl Tangle {
         self.vertices.get(id).map(|r| r.value().confirmed.is_some())
     }
 
-    pub fn get(&self, id: &Id) -> Option<Payload> {
-        self.vertices.get(id).map(|r| r.value().payload.clone())
+    pub fn get(&self, id: &Id) -> Option<Transaction> {
+        self.vertices.get(id).map(|r| r.value().transaction.clone())
     }
 
     pub fn num_tips(&self) -> usize {

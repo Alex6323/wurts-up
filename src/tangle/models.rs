@@ -12,12 +12,12 @@ pub type Confirmation = Option<MilestoneIndex>;
 pub type Children = HashSet<Id>;
 
 #[derive(Clone, Debug)]
-pub enum Payload {
+pub enum Transaction {
     Message(String),
     Milestone(MilestoneIndex),
 }
 
-impl Payload {
+impl Transaction {
     pub fn is_milestone(&self) -> bool {
         match *self {
             Self::Milestone(_) => true,
@@ -26,7 +26,7 @@ impl Payload {
     }
 }
 
-impl Default for Payload {
+impl Default for Transaction {
     fn default() -> Self {
         Self::Message("".into())
     }
@@ -63,7 +63,7 @@ pub enum Score {
 
 #[derive(Default)]
 pub struct Vertex {
-    pub payload: Payload,
+    pub transaction: Transaction,
     pub parents: Parents,
     pub children: Children,
     pub solid: bool,
