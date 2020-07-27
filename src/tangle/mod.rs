@@ -2,7 +2,7 @@ mod models;
 
 use models::*;
 
-pub use models::{AtomicMilestoneIndex, Transaction};
+pub use models::{AtomicMilestoneIndex, Message, MessageKind};
 
 use rand::Rng;
 
@@ -40,23 +40,86 @@ pub fn tangle() -> &'static Tangle {
 #[derive(Default)]
 pub struct Tangle {
     // all vertices in the Tangle
-    pub vertices: HashMap<Id, Vertex>,
+    pub vertices: HashMap<InternedHash, Vertex>,
 
     // missing parents; TODO: add confirmation info to it so, that it can be immediatedly set to confirmed if a
     // milestone came in earlier
-    pub missing: HashMap<Id, Children>,
+    pub missing: HashMap<InternedHash, Children>,
 
     // solid entry points and their corresponding milestone index; TODO: use `IndexId` type
-    pub seps: HashMap<Id, MilestoneIndex>,
+    pub seps: HashMap<InternedHash, MilestoneIndex>,
 
     // vertices without children/approvers
-    pub tips: HashSet<Id>,
+    pub tips: HashSet<InternedHash>,
     pub lmi: AtomicMilestoneIndex,
     pub lsmi: AtomicMilestoneIndex,
 }
 
 impl Tangle {
-    pub fn insert(&self, id: Id, transaction: Transaction, ma: Id, pa: Id) {
+    pub fn insert_own(
+        &self,
+        id: InternedHash,
+        message: Message,
+        ma: InternedHash,
+        pa: InternedHash,
+    ) {
+        let now = Instant::now();
+
+        if message.kind != MessageKind::Data && message.kind != MessageKind::Value {
+            println!("Tried to insert unapproprite message type");
+            return;
+        }
+
+        self.tips.insert(id);
+
+        // Here we check if parent-1 ("ma") exists; if it does then we update it with
+        // the newly inserted vertex link
+        if let Some(ma) = self.vertices.get_mut(&ma) {
+            ma.children.insert(id);
+        } else {
+            if !self.seps.contains_key(&ma) && !self.check_db(&ma) {
+                println!("Tried to insert message with missing parent");
+                return;
+            }
+        }
+
+        // Here we check if parent-2 ("pa") exists; if it does then we update it with
+        // the newly inserted vertex link
+        if let Some(pa) = self.vertices.get_mut(&pa) {
+            pa.children.insert(id);
+        } else {
+            if !self.seps.contains_key(&pa) && !self.check_db(&pa) {
+                println!("Tried to insert message with missing parent");
+                return;
+            }
+        }
+
+        // Now we create a `Vertex`, that holds the transaction (Message or Milestone) ...
+        let vertex = Vertex {
+            parents: Parents { ma, pa },
+            message,
+            ..Vertex::default()
+        };
+
+        // ... and insert it.
+        self.vertices.insert(id, vertex);
+
+        self.propagate_state(&id);
+
+        println!(
+            "[insert_own] Inserted own vertex with id={} in {:?}",
+            id,
+            now.elapsed()
+        );
+    }
+
+    pub fn insert_gossip(
+        &self,
+        id: InternedHash,
+        message: Message,
+        ma: InternedHash,
+        pa: InternedHash,
+    ) {
         let now = Instant::now();
 
         self.tips.remove(&ma);
@@ -95,17 +158,16 @@ impl Tangle {
 
         // Here we analyze the type of transaction; it's either a (string) message, or a milestone
         // (with an associated index)
-        let confirmed = match transaction {
-            Transaction::Message(_) => None,
-            Transaction::Milestone(index) => {
+        let confirmed = match message.kind {
+            MessageKind::Milestone(index) => {
                 println!(
-                    "[insert    ] Milestone arrived with id={}, index={}",
+                    "[insert_gsp] Milestone arrived with id={}, index={}",
                     id, index
                 );
 
                 self.lmi.store(index, Ordering::Relaxed);
 
-                println!("[insert    ] LMI now at {}", index);
+                println!("[insert_gsp] LMI now at {}", index);
 
                 // NOTE: how to deal with the situation, that a milestone might not be solid?
                 let confirmed = self.confirm_recent_cone(&ma, &pa, index);
@@ -114,15 +176,18 @@ impl Tangle {
 
                 Some(index)
             }
+            _ => None,
         };
 
         // Now we create a `Vertex`, that holds the transaction (Message or Milestone) ...
         let vertex = Vertex {
-            transaction,
             parents: Parents { ma, pa },
             children,
-            confirmed,
-            ..Vertex::default() // default: unsolid
+            message,
+            metadata: Metadata {
+                confirmed,
+                ..Metadata::default()
+            },
         };
 
         // ... and insert it.
@@ -135,14 +200,14 @@ impl Tangle {
         self.propagate_state(&id);
 
         println!(
-            "[insert    ] Inserted vertex with id={} in {:?}",
+            "[insert_gsp] Inserted gossip vertex with id={} in {:?}",
             id,
             now.elapsed()
         );
     }
 
     // NOTE: there are 3 things being propagated/inherited: solid flag, otrsi, and ytrsi
-    fn propagate_state(&self, root: &Id) {
+    fn propagate_state(&self, root: &InternedHash) {
         let now = Instant::now();
         let mut children = vec![*root];
 
@@ -180,10 +245,10 @@ impl Tangle {
 
                 // NOTE: we now know that we can set it solid
                 if let Some(mut vertex) = self.vertices.get_mut(&id) {
-                    vertex.solid = true;
+                    vertex.metadata.solid = true;
 
-                    match vertex.transaction {
-                        Transaction::Milestone(index) => {
+                    match vertex.message.kind {
+                        MessageKind::Milestone(index) => {
                             self.lsmi.store(index, Ordering::Relaxed);
 
                             println!("[prop_state] LSMI now at {}", index);
@@ -191,12 +256,12 @@ impl Tangle {
                         _ => (),
                     }
 
-                    vertex.otrsi = Some(otrsi);
-                    vertex.ytrsi = Some(ytrsi);
+                    vertex.metadata.otrsi = Some(otrsi);
+                    vertex.metadata.ytrsi = Some(ytrsi);
 
                     // println!(
                     //     "[prop_state] Propagated solid={}, OTRSI={}, YTRSI={} onto {}",
-                    //     vertex.solid, otrsi.0, ytrsi.0, id
+                    //     vertex.metadata.solid, otrsi.0, ytrsi.0, id
                     // );
 
                     // maybe we can propagate state even further
@@ -220,26 +285,31 @@ impl Tangle {
     // TODO: barrier?
 
     // NOTE: this method confirms what it has in its past-cone whether it's solid or not
-    fn confirm_recent_cone(&self, ma: &Id, pa: &Id, index: MilestoneIndex) -> Vec<Id> {
+    fn confirm_recent_cone(
+        &self,
+        ma: &InternedHash,
+        pa: &InternedHash,
+        index: MilestoneIndex,
+    ) -> Vec<InternedHash> {
         let now = Instant::now();
         let mut visited = vec![*ma, *pa];
         let mut confirmed = Vec::new();
 
         while let Some(id) = visited.pop() {
             if let Some(mut vertex) = self.vertices.get_mut(&id) {
-                if vertex.confirmed.is_none() {
+                if vertex.metadata.confirmed.is_none() {
                     // println!(
                     //     "[confirm   ] Confirmed vertex with id={} (ms_index={})",
                     //     id, index
                     // );
 
-                    vertex.confirmed = Some(index);
+                    vertex.metadata.confirmed = Some(index);
 
                     // NOTE: Setting otrsi and ytrsi for  confirmed vertices - I think - prevents some branching,
                     // if the tip directly attaches to it
                     // NOTE: the confirmed vertex now points to itself with its otrsi and ytrsi (as it has become a root transaction)
-                    vertex.otrsi = Some(IndexId(index, id));
-                    vertex.ytrsi = Some(IndexId(index, id));
+                    vertex.metadata.otrsi = Some(IndexId(index, id));
+                    vertex.metadata.ytrsi = Some(IndexId(index, id));
 
                     // NOTE: we collect the newly confirmed vertices
                     confirmed.push(id);
@@ -266,7 +336,7 @@ impl Tangle {
 
     // NOTE: so once a milestone comes in we have to walk the future cones of the root transactions and update their
     // OTRSI and YTRSI
-    fn update_snapshot_indices(&self, mut confirmed: Vec<Id>, index: MilestoneIndex) {
+    fn update_snapshot_indices(&self, mut confirmed: Vec<InternedHash>, index: MilestoneIndex) {
         let now = Instant::now();
         let mut children = Vec::new();
         let mut updated = std::collections::HashSet::new();
@@ -279,20 +349,23 @@ impl Tangle {
                 for child in vertex.children.iter() {
                     children.push(*child);
                 }
-                (vertex.otrsi.unwrap().0, vertex.ytrsi.unwrap().0)
+                (
+                    vertex.metadata.otrsi.unwrap().0,
+                    vertex.metadata.ytrsi.unwrap().0,
+                )
             } else {
                 panic!("[update rsi] Vertex not found");
             };
 
             for child in &children {
                 if let Some(mut vertex2) = self.vertices.get_mut(&child) {
-                    if vertex2.confirmed.is_some() {
+                    if vertex2.metadata.confirmed.is_some() {
                         // NOTE: we can ignore already confirmed vertices
                         // println!("[update rsi] No update required: {}", child);
                         continue;
                     }
 
-                    if let Some(index_id) = vertex2.otrsi {
+                    if let Some(index_id) = vertex2.metadata.otrsi {
                         if index_id.1 == id {
                             // println!(
                             //     "[update rsi] Updating otrsi={} in {} from {}",
@@ -300,18 +373,18 @@ impl Tangle {
                             // );
 
                             //index_id = IndexId(otrsi, id);
-                            vertex2.otrsi.replace(IndexId(otrsi, id));
+                            vertex2.metadata.otrsi.replace(IndexId(otrsi, id));
                         }
                     }
 
-                    if let Some(index_id) = vertex2.ytrsi {
+                    if let Some(index_id) = vertex2.metadata.ytrsi {
                         if index_id.1 == id {
                             // println!(
                             //     "[update rsi] Updating ytrsi={} in {} from {}",
                             //     ytrsi, child, id
                             // );
 
-                            vertex2.ytrsi.replace(IndexId(ytrsi, id));
+                            vertex2.metadata.ytrsi.replace(IndexId(ytrsi, id));
                         }
                     }
 
@@ -329,59 +402,61 @@ impl Tangle {
         println!("[update rsi] Updated RSI values in {:?}", now.elapsed());
     }
 
-    // Allows us to define certain `Id`s as solid entry points.
-    pub fn add_solid_entrypoint(&self, id: Id, index: MilestoneIndex) {
+    // Allows us to define certain `InternedHash`s as solid entry points.
+    pub fn add_solid_entrypoint(&self, id: InternedHash, index: MilestoneIndex) {
         self.seps.insert(id, index);
     }
 
-    pub fn is_solid(&self, id: &Id) -> bool {
+    pub fn is_solid(&self, id: &InternedHash) -> bool {
         if let Some(vertex) = self.vertices.get(&id) {
-            vertex.solid
+            vertex.metadata.solid
         } else {
             self.is_sep(id) || self.check_db(id)
         }
     }
 
-    pub fn is_sep(&self, id: &Id) -> bool {
+    pub fn is_sep(&self, id: &InternedHash) -> bool {
         self.seps.contains_key(id)
     }
 
-    pub fn is_milestone(&self, id: &Id) -> bool {
+    pub fn is_milestone(&self, id: &InternedHash) -> bool {
         if let Some(vertex) = self.vertices.get(&id) {
-            vertex.transaction.is_milestone()
+            vertex.message.kind.is_milestone()
         } else {
             false
         }
     }
 
-    pub fn get_otrsi(&self, id: &Id) -> Option<MilestoneIndex> {
+    pub fn get_otrsi(&self, id: &InternedHash) -> Option<MilestoneIndex> {
         if let Some(vertex) = self.vertices.get(&id) {
-            vertex.otrsi.map(|index_id| index_id.0)
+            vertex.metadata.otrsi.map(|index_id| index_id.0)
         } else {
             self.seps.get(id).map(|index| *index)
         }
     }
 
-    pub fn get_ytrsi(&self, id: &Id) -> Option<MilestoneIndex> {
+    pub fn get_ytrsi(&self, id: &InternedHash) -> Option<MilestoneIndex> {
         if let Some(vertex) = self.vertices.get(&id) {
-            vertex.ytrsi.map(|index_id| index_id.0)
+            vertex.metadata.ytrsi.map(|index_id| index_id.0)
         } else {
             self.seps.get(id).map(|index| *index)
         }
     }
 
     // Checks wether the id (hash?) is in the db
-    fn check_db(&self, _id: &Id) -> bool {
-        // NOTE: the Id type is not used in the db, but the (slower) transaction hash instead
+    fn check_db(&self, _id: &InternedHash) -> bool {
+        // NOTE: the InternedHash type is not used in the db, but the (slower) transaction hash instead
         false
     }
 
-    pub fn confirmed(&self, id: &Id) -> Option<bool> {
-        self.vertices.get(id).map(|r| r.value().confirmed.is_some())
+    pub fn confirmed(&self, id: &InternedHash) -> Option<bool> {
+        self.vertices
+            .get(id)
+            .map(|r| r.value().metadata.confirmed.is_some())
     }
 
-    pub fn get(&self, id: &Id) -> Option<Transaction> {
-        self.vertices.get(id).map(|r| r.value().transaction.clone())
+    pub fn get(&self, id: &InternedHash) -> Option<Metadata> {
+        self.vertices.get(id).map(|r| r.value().metadata.clone())
     }
 
     pub fn num_tips(&self) -> usize {
@@ -389,7 +464,7 @@ impl Tangle {
     }
 
     // TODO: add `select_two_tips` method
-    pub fn select_two_tips(&self) -> Option<(Id, Id)> {
+    pub fn select_two_tips(&self) -> Option<(InternedHash, InternedHash)> {
         if let Some(tip1) = self.select_tip() {
             if let Some(tip2) = self.select_tip() {
                 return Some((tip1, tip2));
@@ -400,7 +475,7 @@ impl Tangle {
     }
 
     /// Updates tip score, and performs the tip selection algorithm (TSA).
-    pub fn select_tip(&self) -> Option<Id> {
+    pub fn select_tip(&self) -> Option<InternedHash> {
         let now = Instant::now();
 
         // From all the tips create a subset "solid tips"
@@ -414,18 +489,21 @@ impl Tangle {
 
         for id in self.tips.iter() {
             if let Some(tip) = self.vertices.get(&id) {
-                let otrsi = tip.otrsi.unwrap().0;
-                let ytrsi = tip.ytrsi.unwrap().0;
+                let otrsi = tip.metadata.otrsi.expect("").0;
+                let ytrsi = tip.metadata.ytrsi.unwrap().0;
 
                 let score = self.get_tip_score(&id, otrsi, ytrsi) as isize;
 
                 // NOTE: only non- and semi-lazy tips are considered for selection
-                if !tip.solid || !tip.valid || tip.selected > 2 || score == 0 {
-                    remove_list.push(id);
+                // TODO: think about the `solid` condition: what if a tip later becomes solid?
+                if !tip.metadata.solid || tip.metadata.selected >= 2 || score == 0 {
+                    remove_list.push(*id);
+
                     println!(
-                        "[select_tip] Removing tip: solid={}, valid={}, selected={}, score={}",
-                        tip.solid, tip.valid, tip.selected, score
+                        "[select_tip] Removing tip: solid={}, selected={}, score={}",
+                        tip.metadata.solid, tip.metadata.selected, score
                     );
+
                     continue;
                 }
 
@@ -436,20 +514,26 @@ impl Tangle {
             }
         }
 
-        // TODO: remove invalid tips
-        println!("[select_tip] {} tips should be removed", remove_list.len());
+        for id in remove_list.iter() {
+            self.tips.remove(id);
+        }
+
+        println!(
+            "[select_tip] Removed {} tips from tip pool",
+            remove_list.len()
+        );
 
         // TODO: randomly select tip
         let mut rng = rand::thread_rng();
         let mut random_number = rng.gen_range(1, score_sum);
 
-        println!("[select_tip] Tip Pool Size = {}", valid_tips.len());
+        println!("[select_tip] Num Elligible Tips = {}", valid_tips.len());
 
         for (id, score) in valid_tips.iter() {
             random_number -= score;
             if random_number <= 0 {
                 if let Some(mut tip) = self.vertices.get_mut(id) {
-                    tip.selected += 1;
+                    tip.metadata.selected += 1;
                 }
 
                 println!(
@@ -466,7 +550,12 @@ impl Tangle {
     }
 
     #[inline]
-    fn get_tip_score(&self, id: &Id, otrsi: MilestoneIndex, ytrsi: MilestoneIndex) -> Score {
+    fn get_tip_score(
+        &self,
+        id: &InternedHash,
+        otrsi: MilestoneIndex,
+        ytrsi: MilestoneIndex,
+    ) -> Score {
         // NOTE: unwrap should be safe
         let vertex = self.vertices.get(&id).unwrap();
 
@@ -492,7 +581,7 @@ impl Tangle {
             //     return Score::Lazy;
             // }
 
-            if self.lsmi.load(Ordering::Relaxed) - ma.otrsi.unwrap().0 > OTRSI_DELTA {
+            if self.lsmi.load(Ordering::Relaxed) - ma.metadata.otrsi.unwrap().0 > OTRSI_DELTA {
                 parent_otrsi_check -= 1;
             }
         }
@@ -503,7 +592,7 @@ impl Tangle {
             //     return Score::Lazy;
             // }
 
-            if self.lsmi.load(Ordering::Relaxed) - pa.otrsi.unwrap().0 > OTRSI_DELTA {
+            if self.lsmi.load(Ordering::Relaxed) - pa.metadata.otrsi.unwrap().0 > OTRSI_DELTA {
                 parent_otrsi_check -= 1;
             }
         }
@@ -529,13 +618,13 @@ impl Tangle {
     // For a given transaction finds all CRTs (confirmed root transactins).
     // NOTE: This method is not used during runtime. It's just to check that the OTRSI and YTRSI values are correctly propagated!
     // The first version of this prototype used it, and it was very very slow!
-    pub fn scan_confirmed_root_transactions(&self, id: &Id) -> Option<(OTRSI, YTRSI)> {
+    pub fn scan_confirmed_root_transactions(&self, id: &InternedHash) -> Option<(OTRSI, YTRSI)> {
         let mut visited = vec![*id];
         let mut collected = std::collections::HashSet::new();
 
         while let Some(id) = visited.pop() {
             if let Some(vertex) = self.vertices.get(&id) {
-                if let Some(index) = vertex.confirmed {
+                if let Some(index) = vertex.metadata.confirmed {
                     collected.insert(index);
                 } else {
                     visited.push(vertex.parents.ma);
